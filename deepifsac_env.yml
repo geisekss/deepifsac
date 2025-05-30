@@ -1,0 +1,15 @@
+name: deepifsac_env
+channels:
+  - pytorch
+  - conda-forge
+  - anaconda
+  - defaults
+dependencies:
+  - numpy=2.2.6
+  - pandas=2.2.3
+  - pytorch=2.7.0
+  - scikit-learn=1.6.1
+  - scipy=1.15.3
+  - einops=0.8.1
+  - python=3.12.9
+  - pip=25.1.0

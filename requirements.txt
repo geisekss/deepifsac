@@ -1,0 +1,6 @@
+numpy==2.2.6
+pandas==2.2.3
+torch==2.7.0
+scikit-learn==1.6.1
+scipy==1.15.3
+einops==0.8.1
