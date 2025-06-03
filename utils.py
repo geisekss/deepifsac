@@ -3,6 +3,10 @@ import torch
 import numpy as np
 from torch.utils.data import DataLoader
 
+def get_nan_mask(X):
+    temp = X.fillna("MissingValue")
+    nan_mask = temp.ne("MissingValue").astype(int)
+    return nan_mask
 
 def make_default_mask(x):
     mask = np.ones_like(x)
@@ -82,7 +86,25 @@ def imputed_data(data, settings, opt = None):
     else:
         corruptor_x = Corruptor(data, settings)
         data, mask = corruptor_x(torch.tensor(data))
-        median = torch.nanmedian(data, dim=0).values
-        X_train_imp = torch.where(torch.isnan(data), median, data)
+        # median = torch.nanmedian(data, dim=0).values
+        # X_train_imp = torch.where(torch.isnan(data), median, data)
 
-    return X_train_imp, mask
+    return data, mask
+
+def standardize_data(X: np.array, mean_X: float, std_X: float) -> np.array:
+
+    X_stdized = (X - mean_X) / std_X / 2
+    X_stdized = torch.tensor(X_stdized)
+    return X_stdized
+
+
+def min_max_scaler(X: np.array, min_vals: np.array, max_vals: np.array) -> np.array:
+    in_dim = X.shape[1]
+    eps = 0.001
+
+    for i in range(in_dim):
+
+        X[:,i] = (X[:,i] - min_vals[i])/(max_vals[i] - min_vals[i] + eps)
+
+    return X
+
