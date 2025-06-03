@@ -275,16 +275,15 @@ def generate_data_loader(X: np.array, imp_X: np.array, nan_mask: np.array, mean:
     return data_loader
 
 
-def pre_process_deepifsac(X, imp_X, mean_features, median_features, con_idxs, cat_idxs=[]):
+def pre_process_deepifsac(X, t_mask, mean_features, median_features, con_idxs, cat_idxs=[]):
     
-    for i, col in enumerate(X.columns.values[con_idxs]):
-        X.loc[:, col] = X.loc[:, col].fillna(mean_features[con_idxs[i]])
+    imp_X = X.copy()
 
-    imp_X = torch.from_numpy(imp_X)
-    median = torch.from_numpy(median_features)
-    imp_X = torch.where(torch.isnan(imp_X), median, imp_X)
-    imp_X = np.array(imp_X.cpu())
+    for i, col in enumerate(imp_X.columns.values[con_idxs]):
+        idxs = t_mask[:, i].nonzero()[0]
+        imp_X.loc[idxs, col] = median_features[con_idxs[i]]
     
     cat_dims = np.append(np.array([1]), np.array(cat_idxs)).astype(int)
-    X = X.values
+    X = X.values.astype(np.float32)
+    imp_X = imp_X.values.astype(np.float32)
     return X, imp_X, cat_dims

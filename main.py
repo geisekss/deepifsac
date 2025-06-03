@@ -1,11 +1,15 @@
 import os
+import random
 import numpy as np
 import pandas as pd
 
 import torch
-from torch.utils.data import DataLoader
 from models.deepifsac import DeepIFSAC
-from data_loader import data_prep_dataFrame, Dataset_imputed
+from utils import imputed_data
+from data_loader import ( 
+                         pre_process_deepifsac, 
+                         generate_data_loader
+                        )
 
 TRAIN_EPOCHS = 10
 BATCHSIZE = 128
@@ -13,7 +17,7 @@ EPOCHS = 1
 MISSING_TYPE = 'mcar'
 MISSING_RATE = 0.5
 FLAG_TRAIN = 1
-DATASET = "BALANCE_SCALE"
+DATASET = "COM_PRODUTO"
 DS_SEED = 0
 
 def main():
@@ -29,25 +33,31 @@ def main():
     device = torch.device(f"cuda:0" if (torch.cuda.is_available()) else "cpu")
     print(f"Device is {device}.")
 
-    torch.manual_seed(0)
+    torch.manual_seed(1)
     np.random.seed(1)
-    
-    df = pd.read_csv("X_dataset_11_balance.csv")
-    cat_dims, cat_idxs, con_idxs, X_train, X_test, train_mean, train_std = data_prep_dataFrame(df,seed=DS_SEED)
-    train_mean_std = np.array([train_mean, train_std]).astype(np.float32)
-    
-    # In case X has only numerical data: cat_idxs = []
-    train_ds = Dataset_imputed(X_train, continuous_mean_std=train_mean_std, cat_cols=cat_idxs)
-    train_ds.generate_imputed(corruptor_settings)
-    train_imp_mean_std = (train_ds.imp_mean, train_ds.imp_std)
-    test_ds = Dataset_imputed(X_test, continuous_mean_std=train_mean_std, cat_cols=cat_idxs)
-    test_ds.generate_imputed(corruptor_settings, imp_mean_std=train_imp_mean_std)
 
-    trainloader = DataLoader(train_ds, batch_size=BATCHSIZE, shuffle=True, num_workers=0)
-    testloader = DataLoader(test_ds, batch_size=BATCHSIZE, shuffle=False, num_workers=0)
+    X_train = pd.read_csv("X_dataset_11_balance_missing20.csv").astype(np.float32)
+    con_columns = X_train.columns
+    con_idxs = list(range(len(X_train.columns)))
 
-    # Append 1 for CLS token.
-    cat_dims = np.append(np.array([1]), np.array(cat_dims)).astype(int)
+    temp = X_train.fillna("MissingValue")
+    nan_mask = temp.ne("MissingValue").astype(int)
+
+    mean_features = X_train.loc[:, con_columns].mean().values.astype(np.float32)
+    std_features = X_train.loc[:, con_columns].std().values.astype(np.float32)
+    median_features = X_train.loc[:, con_columns].median().values.astype(np.float32)
+    
+    for i, col in enumerate(X_train.columns.values[con_idxs]):
+         X_train.loc[:, col] = X_train.loc[:, col].fillna(mean_features[con_idxs[i]])
+    
+    _, t_mask = imputed_data(X_train.values, corruptor_settings)
+    t_mask = np.array(t_mask.cpu()).copy().astype(np.int64) 
+
+
+    ## STARTS HERE  
+    X_train, imp_X_train, cat_dims = pre_process_deepifsac(X_train, t_mask, mean_features, median_features, con_idxs)
+    train_loader = generate_data_loader(X_train, imp_X_train, t_mask, mean_features, std_features, cat_cols=[], create_ds=True, X_mask=nan_mask.values, shuffle_data=True)
+   
 
     cutmix_corruptor_settings = {
                             'method': 'cutmix',
@@ -74,7 +84,7 @@ def main():
 
         fold_key = f'fold_{DS_SEED}'
         filename_metrics = f'{directory}/train_{DATASET}_{MISSING_TYPE}_{MISSING_RATE}_cutmix.pkl' 
-        model.fit(trainloader, filename_metrics, TRAIN_EPOCHS, fold_key, device)
+        model.fit(train_loader, filename_metrics, TRAIN_EPOCHS, fold_key, device)
 
         # Save pretrained model.
         folder = './results/model_weights'
@@ -87,14 +97,13 @@ def main():
     else:
         model.load_state_dict(torch.load(MODEL_PATH, weights_only=True))
 
-    all_predictions_train, nrmse_train = model.transform(trainloader, device, train_mean_std, train_imp_mean_std)
+    all_predictions_train, nrmse_train = model.transform(train_loader, device)
     print('NRMSE for continuous features on the train set:', nrmse_train.item())
-    pd.DataFrame(all_predictions_train).to_csv("results/imputed_train_set.csv")
+    pd.DataFrame(all_predictions_train).to_csv("imputed_train_set.csv")
 
-    all_predictions_test, nrmse_teste = model.transform(testloader, device, train_mean_std, train_imp_mean_std)
-    print('NRMSE for continuous features on the test set:', nrmse_teste.item())
-    pd.DataFrame(all_predictions_test).to_csv("results/imputed_test_set.csv")
-
+    # all_predictions_val, nrmse_val = model.transform(val_loader, device)
+    # print('NRMSE for continuous features on the validation set:', nrmse_val.item())
+    # pd.DataFrame(all_predictions_val).to_csv("imputed_val_set.csv")
 
 if __name__ == '__main__':
     main()
