@@ -1,4 +1,3 @@
-import openml
 import torch
 import numpy as np
 from sklearn.preprocessing import LabelEncoder
@@ -252,7 +251,21 @@ def data_prep_dataFrame(df, seed=0, con_idxs=None, cat_idxs=None, categorical_in
 
 
 
-def generate_data_loader(X: np.array, imp_X: np.array, nan_mask: np.array, mean: np.array, std: np.array, cat_cols=[], create_ds=False, X_mask=None, shuffle_data=True, ds_seed=0):
+def generate_data_loader(X: np.array, imp_X: np.array, nan_mask: np.array, mean: np.array, std: np.array, cat_cols=[],  X_mask=None, create_ds=False, shuffle_data=True):
+    ''''
+    X: original data with mean on missing values
+    imp_X: Imputed X (with NaNs or median values) 
+    nan_mask: generated mask from masking method 
+    mean: array with mean values of each column
+    std: array with std values of each column
+    cat_cols: indexes of categorical columns in X 
+    create_ds: boolean to create or not the dataloader from a Dataset_imputed object (necessary in DeepIFSAC method)
+    X_mask: mask of X, where 0 means the value was originally NaN and filled with the mean (necessary to create the Dataset_imputed object)
+    shuffle_data: True if is X is training data and False if X is test data
+
+    Output:
+    data_loader: DataLoader object 
+    '''
     torch.manual_seed(1)
     np.random.seed(1)
 
@@ -275,8 +288,17 @@ def generate_data_loader(X: np.array, imp_X: np.array, nan_mask: np.array, mean:
     return data_loader
 
 
-def pre_process_deepifsac(X, t_mask, mean_features, median_features, con_idxs, cat_idxs=[]):
-    
+def pre_process_deepifsac(X: pd.DataFrame, t_mask: np.array, median_features: np.array, con_idxs: list, cat_idxs=[]):
+    ''''
+    X: original data filled with mean on missing values
+    t_mask: generated mask from masking method 
+    median_features: array with median values of each column
+    con_idxs: indexes of numerical columns in X
+    cat_idxs: indexes of categorical columns in X 
+
+    Output
+    imp_X: X filled by median values according to t_mask
+    '''
     imp_X = X.copy()
 
     for i, col in enumerate(imp_X.columns.values[con_idxs]):
