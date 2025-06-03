@@ -243,4 +243,5 @@ class DeepIFSAC(nn.Module):
                                         torch.ones_like(torch.var(all_original_data, dim=0)),
                                         torch.var(all_original_data, dim=0))
         nrmse_con = torch.mean(torch.sqrt(mse_con) / feature_variances)
+        
         return(all_predictions, nrmse_con)

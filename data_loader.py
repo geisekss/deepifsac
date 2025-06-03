@@ -1,12 +1,15 @@
+import openml
+import torch
 import numpy as np
 from sklearn.preprocessing import LabelEncoder
 import pandas as pd
 from torch.utils.data import Dataset
+from torch.utils.data import DataLoader
 from sklearn.model_selection import StratifiedKFold
-from utils import imputed_data
+from utils import imputed_data, standardize_data
 
 class Dataset_imputed(Dataset):
-    def __init__(self, X, imp_X=None, continuous_mean_std=None, imp_mean_std=None, cat_cols=[]):
+    def __init__(self, X, t_mask=None, imp_X=None, continuous_mean_std=None, imp_mean_std=None, cat_cols=[]):
         
         self.cat_cols = list(cat_cols)
         X_mask =  X['mask'].copy()
@@ -24,10 +27,10 @@ class Dataset_imputed(Dataset):
         else:
             self.mean, self.std = np.array(self.Xcont,dtype=np.float32).mean(0), np.array(self.Xcont ,dtype=np.float32).std(0)
             self.std = np.where(self.std < 1e-6, 1e-6, self.std)
-        self.Xcont = (self.Xcont - self.mean) / self.std 
-
-        if imp_X is not None:
+        
+        if (imp_X is not None) and (t_mask is not None):
             self.imp_X = imp_X
+            imp_X = np.array(self.imp_X.cpu())
             self.imp_Xcat = imp_X[:,self.cat_cols].copy().astype(np.int64) 
             self.imp_Xcon = imp_X[:,self.con_cols].copy().astype(np.float32) 
             if imp_mean_std is not None:
@@ -35,16 +38,18 @@ class Dataset_imputed(Dataset):
             else:
                 self.imp_mean, self.imp_std = self.imp_Xcon.mean(0), self.imp_Xcon.std(0)
             self.imp_std = np.where(self.imp_std < 1e-6, 1e-6, self.imp_std)
-            self.imp_Xcon = (self.imp_Xcon - self.imp_mean) / self.imp_std
+            self.t_mask = t_mask
         else:
             self.imp_X = None
             self.imp_Xcat = None
             self.imp_Xcon = None
             self.imp_mean = None
             self.imp_std = None
+            self.t_mask = None
     
        
     def generate_imputed(self, corruptor_settings, imp_mean_std=None):
+        # mask generated from missing type imputation
         self.imp_X, self.t_mask  = imputed_data(self.X, corruptor_settings)
         imp_X = np.array(self.imp_X.cpu())
         self.imp_Xcat = imp_X[:,self.cat_cols].copy().astype(np.int64) #categorical columns
@@ -58,13 +63,51 @@ class Dataset_imputed(Dataset):
 
 
     def __len__(self):
+        # return len(self.y)
         return self.X.shape[0]
     
     def __getitem__(self, idx):
+        # X1 has categorical data, X2 has continuous
+        # return (
+        #     np.concatenate((self.cls[idx], self.Xcat[idx])), self.Xcont[idx],
+        #     np.concatenate((self.cls[idx], self.imp_Xcat[idx])), self.imp_Xcon[idx],
+        #     self.y[idx], np.concatenate((self.cls_mask[idx], self.Xcat_mask[idx])), self.Xcont_mask[idx], self.t_mask[idx])   
         return (
             np.concatenate((self.cls[idx], self.Xcat[idx])), self.Xcont[idx],
             np.concatenate((self.cls[idx], self.imp_Xcat[idx])), self.imp_Xcon[idx],
             np.concatenate((self.cls_mask[idx], self.Xcat_mask[idx])), self.Xcont_mask[idx], self.t_mask[idx])   
+    
+class Dataset_test_imputed(Dataset):
+    def __init__(self, imp_X, imp_mean_std=None, cat_cols=[]):
+        self.imp_X = imp_X['data'].copy()
+
+        self.cat_cols = list(cat_cols)
+        self.con_cols = list(set(np.arange(self.imp_X.shape[1])) - set(cat_cols))
+
+        self.imp_Xcat = imp_X[:,self.cat_cols].copy().astype(np.int64) 
+        self.imp_Xcon = imp_X[:,self.con_cols].copy().astype(np.float32) 
+        if imp_mean_std is not None:
+            self.imp_mean, self.imp_std = imp_mean_std
+        else:
+            self.imp_mean, self.imp_std = self.imp_Xcon.mean(0), self.imp_Xcon.std(0)
+        self.imp_std = np.where(self.imp_std < 1e-6, 1e-6, self.imp_std)
+        self.imp_Xcon = (self.imp_Xcon - self.imp_mean) / self.imp_std
+
+        self.cls = np.zeros((self.imp_X.shape[0], 1), dtype=int)
+        self.cls_mask = np.ones((self.imp_X.shape[0], 1), dtype=int)
+
+        self.X_mask = imp_X['mask'].copy()
+        self.Xcat_mask = self.X_mask[:,self.cat_cols].copy().astype(np.int64)
+        self.Xcont_mask = self.X_mask[:,self.con_cols].copy().astype(np.int64)
+
+
+    def __len__(self):
+        return self.imp_X.shape[0]
+    
+    def __getitem__(self, idx): 
+        return (
+            np.concatenate((self.cls[idx], self.imp_Xcat[idx])), self.imp_Xcon[idx],
+            np.concatenate((self.cls_mask[idx], self.Xcat_mask[idx])), self.Xcont_mask[idx])   
 
 
 def concat_data(X,y):
@@ -169,6 +212,16 @@ def data_prep_dataFrame(df, seed=0, con_idxs=None, cat_idxs=None, categorical_in
     categorical_columns = np.array(X.columns)[cat_idxs].tolist()
     cont_columns = list(set(X.columns.tolist()) - set(categorical_columns))
    
+        
+    # if(not categorical_indicator):
+    #     categorical_indicator = len(X.columns)*[False]
+
+    # categorical_columns = X.columns[list(np.where(np.array(categorical_indicator)==True)[0])].tolist()
+    
+    # cont_columns = list(set(X.columns.tolist()) - set(categorical_columns))
+    # cat_idxs = list(np.where(np.array(categorical_indicator)==True)[0])
+    # con_idxs = list(set(range(len(X.columns))) - set(cat_idxs))
+    # print(cat_idxs, con_idxs, 'cat, con')
     for col in categorical_columns:
         X[col] = X[col].astype("object")
 
@@ -196,3 +249,42 @@ def data_prep_dataFrame(df, seed=0, con_idxs=None, cat_idxs=None, categorical_in
     train_std = np.where(train_std < 1e-6, 1e-6, train_std)
     
     return cat_dims, cat_idxs, con_idxs, X_train, X_test, train_mean, train_std
+
+
+
+def generate_data_loader(X: np.array, imp_X: np.array, nan_mask: np.array, mean: np.array, std: np.array, cat_cols=[], create_ds=False, X_mask=None, shuffle_data=True, ds_seed=0):
+    torch.manual_seed(1)
+    np.random.seed(1)
+
+    con_cols = list(set(np.arange(X.shape[1])) - set(cat_cols))
+    X[:, con_cols] = standardize_data(X[:, con_cols], mean, std)
+    imp_X[:,con_cols] = standardize_data(imp_X[:,con_cols], mean, std)
+
+    if create_ds and (X_mask is not None):
+        X_d = {
+            'data': X,
+            'mask': X_mask
+        }
+        
+        imp_X =  torch.from_numpy(imp_X)
+        t_mask =  torch.from_numpy(nan_mask)
+        ds = Dataset_imputed(X_d, t_mask=t_mask, imp_X=imp_X, continuous_mean_std=(mean, std), imp_mean_std=(mean, std), cat_cols=cat_cols)
+        data_loader = DataLoader(ds, batch_size=128, shuffle=shuffle_data, num_workers=0)
+    else:
+        data_loader = DataLoader(imp_X, batch_size=128, shuffle=shuffle_data, num_workers=0)
+    return data_loader
+
+
+def pre_process_deepifsac(X, imp_X, mean_features, median_features, con_idxs, cat_idxs=[]):
+    
+    for i, col in enumerate(X.columns.values[con_idxs]):
+        X.loc[:, col] = X.loc[:, col].fillna(mean_features[con_idxs[i]])
+
+    imp_X = torch.from_numpy(imp_X)
+    median = torch.from_numpy(median_features)
+    imp_X = torch.where(torch.isnan(imp_X), median, imp_X)
+    imp_X = np.array(imp_X.cpu())
+    
+    cat_dims = np.append(np.array([1]), np.array(cat_idxs)).astype(int)
+    X = X.values
+    return X, imp_X, cat_dims
