@@ -1,7 +1,8 @@
 import os
+import json
+
 import torch
 import numpy as np
-from torch.utils.data import DataLoader
 
 def get_nan_mask(X):
     temp = X.fillna("MissingValue")
@@ -91,12 +92,16 @@ def imputed_data(data, settings, opt = None):
 
     return data, mask
 
-def standardize_data(X: np.array, mean_X: float, std_X: float) -> np.array:
+def standardize_data(X: np.array, mean_X: np.array, std_X: np.array) -> np.array:
 
     X_stdized = (X - mean_X) / std_X / 2
     X_stdized = torch.tensor(X_stdized)
     return X_stdized
 
+def z_score(X: np.array, mean_X: np.array, std_X: np.array) -> np.array:
+    X_stdized = (X - mean_X) / std_X 
+    X_stdized = torch.tensor(X_stdized)
+    return X_stdized
 
 def min_max_scaler(X: np.array, min_vals: np.array, max_vals: np.array) -> np.array:
     in_dim = X.shape[1]
@@ -108,3 +113,8 @@ def min_max_scaler(X: np.array, min_vals: np.array, max_vals: np.array) -> np.ar
 
     return X
 
+def save_results(result_save_path, results):
+    with open (f'{result_save_path}/result.txt', 'a+') as f:
+        f.write(json.dumps(results))
+
+    print(f'saving results to {result_save_path}')

@@ -5,9 +5,14 @@ import pandas as pd
 
 import torch
 from models.deepifsac import DeepIFSAC
-from utils import imputed_data
+from models.diffputter import DiffPuter
+from utils import   (
+                        save_results
+                    )
 from data_loader import ( 
+                         load_impute_X,
                          pre_process_deepifsac, 
+                         pre_process_diffputter,
                          generate_data_loader
                         )
 
@@ -17,8 +22,11 @@ EPOCHS = 1
 MISSING_TYPE = 'mcar'
 MISSING_RATE = 0.5
 FLAG_TRAIN = 1
-DATASET = "COM_PRODUTO"
+DATASET = "BALANCE"
 DS_SEED = 0
+N_TRIALS = 10
+N_STEPS = 50
+MAX_ITER = 10
 
 def main():
 
@@ -36,28 +44,62 @@ def main():
     torch.manual_seed(1)
     np.random.seed(1)
 
-    X_train = pd.read_csv("X_dataset_11_balance_missing20.csv").astype(np.float32)
-    con_columns = X_train.columns
-    con_idxs = list(range(len(X_train.columns)))
 
-    temp = X_train.fillna("MissingValue")
-    nan_mask = temp.ne("MissingValue").astype(int)
+    ## DIFFPUTTER    
+    '''
+    X_train, nan_mask, t_mask, mean_features, std_features, median_features, con_idxs = load_impute_X("housing.csv", corruptor_settings)
+    X_train, X_train_miss, mask = pre_process_diffputter(X_train.values, t_mask, mean_features, std_features)
+    X_train_miss_init = X_train_miss.copy()
 
-    mean_features = X_train.loc[:, con_columns].mean().values.astype(np.float32)
-    std_features = X_train.loc[:, con_columns].std().values.astype(np.float32)
-    median_features = X_train.loc[:, con_columns].median().values.astype(np.float32)
+    result_save_path = f'results/{DATASET}/{N_TRIALS}_{N_STEPS}'
+    os.makedirs(result_save_path) if not os.path.exists(result_save_path) else None
+    MODEL_PATH = f'./results/model_weights/diffputter'
     
-    for i, col in enumerate(X_train.columns.values[con_idxs]):
-         X_train.loc[:, col] = X_train.loc[:, col].fillna(mean_features[con_idxs[i]])
+    diffputer = DiffPuter(result_save_path = result_save_path,
+                          num_trials = N_TRIALS, 
+                          epochs_m_step = TRAIN_EPOCHS, 
+                          patience_m_step = 300, 
+                          hid_dim = 1024, 
+                          device = device, 
+                          lr = 1e-4, 
+                          num_steps = N_STEPS, 
+                          ckpt_dir = MODEL_PATH,
+                          in_dim=X_train.shape[1])
     
-    _, t_mask = imputed_data(X_train.values, corruptor_settings)
-    t_mask = np.array(t_mask.cpu()).copy().astype(np.int64) 
 
+    for iteration in range(MAX_ITER):
+        print("Iteration:", iteration)
+        os.makedirs(f'{MODEL_PATH}/{iteration}', exist_ok=True) if not os.path.exists(f'{MODEL_PATH}/{iteration}') else None
 
-    ## STARTS HERE  
-    X_train, imp_X_train, cat_dims = pre_process_deepifsac(X_train, t_mask, mean_features, median_features, con_idxs)
-    train_loader = generate_data_loader(X_train, imp_X_train, t_mask, mean_features, std_features, cat_cols=[], create_ds=True, X_mask=nan_mask.values, shuffle_data=True)
-   
+        
+        if iteration > 0:
+            print(f'Loading X_train_miss')
+            X_train_miss = np.load(f'{MODEL_PATH}/{iteration}/Xmiss_iter{iteration}.npy') / 2
+
+        train_loader = generate_data_loader(X_train_miss, nan_mask=t_mask, mean=mean_features, std=std_features, cat_cols=[])
+       
+        diffputer.fit(iteration, train_loader)
+        rec_X = diffputer.transform(iteration, X_train, mask, X_train_miss_init)
+
+        mae_train, rmse_train= diffputer.get_eval(rec_X, X_train, mask)
+        print('in-sample', mae_train, rmse_train)
+
+        save_results(result_save_path, {
+                                            f'iteration{iteration}': 
+                                                {
+                                                    'MAE': mae_train, 
+                                                    'RMSE': rmse_train}
+                                                }
+                    )
+        diffputer.model.load_state_dict(torch.load(f'{MODEL_PATH}/{iteration}/model.pt'))
+    ''' 
+    ## DEEPIFSAC  
+    
+    X_train, nan_mask, t_mask, mean_features, std_features, median_features, con_idxs = load_impute_X("X_dataset_11_balance_missing20.csv", corruptor_settings)
+    col_names = X_train.columns.to_list()
+    X_train, imp_X_train, cat_dims = pre_process_deepifsac(X_train, t_mask, mean_features, std_features, median_features, con_idxs)
+    train_loader = generate_data_loader(X_train, imp_X=imp_X_train, t_mask=t_mask, mean=mean_features, std=std_features, create_ds=True, X_mask=nan_mask.values, shuffle_data=True)
+    
 
     cutmix_corruptor_settings = {
                             'method': 'cutmix',
@@ -97,13 +139,19 @@ def main():
     else:
         model.load_state_dict(torch.load(MODEL_PATH, weights_only=True))
 
-    all_predictions_train, nrmse_train = model.transform(train_loader, device)
+    mean_std = (train_loader.dataset.mean, train_loader.dataset.std)
+    imp_mean_std = (train_loader.dataset.imp_mean, train_loader.dataset.imp_std)
+
+    train_loader_pred = generate_data_loader(X_train, imp_X=imp_X_train, t_mask=t_mask, mean=mean_features, std=std_features, create_ds=True, X_mask=nan_mask.values, shuffle_data=False)
+    all_predictions_train, nrmse_train = model.transform(train_loader_pred, mean_std, imp_mean_std, device)
     print('NRMSE for continuous features on the train set:', nrmse_train.item())
-    pd.DataFrame(all_predictions_train).to_csv("imputed_train_set.csv")
+    df_preds = pd.DataFrame(all_predictions_train, columns=col_names)
+    df_preds.to_csv("imputed_train_set.csv", index=None)
 
     # all_predictions_val, nrmse_val = model.transform(val_loader, device)
     # print('NRMSE for continuous features on the validation set:', nrmse_val.item())
     # pd.DataFrame(all_predictions_val).to_csv("imputed_val_set.csv")
+    
 
 if __name__ == '__main__':
     main()

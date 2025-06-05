@@ -5,7 +5,8 @@ import pandas as pd
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 from sklearn.model_selection import StratifiedKFold
-from utils import imputed_data, standardize_data
+from utils import imputed_data, standardize_data, z_score
+from dataset import load_dataset
 
 class Dataset_imputed(Dataset):
     def __init__(self, X, t_mask=None, imp_X=None, continuous_mean_std=None, imp_mean_std=None, cat_cols=[]):
@@ -251,14 +252,14 @@ def data_prep_dataFrame(df, seed=0, con_idxs=None, cat_idxs=None, categorical_in
 
 
 
-def generate_data_loader(X: np.array, imp_X: np.array, nan_mask: np.array, mean: np.array, std: np.array, cat_cols=[],  X_mask=None, create_ds=False, shuffle_data=True):
+def generate_data_loader(X: np.array, t_mask: np.array, mean: np.array, std: np.array, cat_idxs=[], imp_X=None, X_mask=None, create_ds=False, batch_size=128, shuffle_data=True):
     ''''
     X: original data with mean on missing values
     imp_X: Imputed X (with NaNs or median values) 
-    nan_mask: generated mask from masking method 
+    t_mask: generated mask from masking method 
     mean: array with mean values of each column
     std: array with std values of each column
-    cat_cols: indexes of categorical columns in X 
+    cat_idxs: indexes of categorical columns in X 
     create_ds: boolean to create or not the dataloader from a Dataset_imputed object (necessary in DeepIFSAC method)
     X_mask: mask of X, where 0 means the value was originally NaN and filled with the mean (necessary to create the Dataset_imputed object)
     shuffle_data: True if is X is training data and False if X is test data
@@ -269,26 +270,23 @@ def generate_data_loader(X: np.array, imp_X: np.array, nan_mask: np.array, mean:
     torch.manual_seed(1)
     np.random.seed(1)
 
-    con_cols = list(set(np.arange(X.shape[1])) - set(cat_cols))
-    X[:, con_cols] = standardize_data(X[:, con_cols], mean, std)
-    imp_X[:,con_cols] = standardize_data(imp_X[:,con_cols], mean, std)
-
-    if create_ds and (X_mask is not None):
+    con_idxs = list(set(np.arange(X.shape[1])) - set(cat_idxs))
+    
+    if create_ds and (X_mask is not None) and (imp_X is not None):
         X_d = {
             'data': X,
             'mask': X_mask
         }
-        
+        t_mask =  torch.from_numpy(t_mask)
         imp_X =  torch.from_numpy(imp_X)
-        t_mask =  torch.from_numpy(nan_mask)
-        ds = Dataset_imputed(X_d, t_mask=t_mask, imp_X=imp_X, continuous_mean_std=(mean, std), imp_mean_std=(mean, std), cat_cols=cat_cols)
-        data_loader = DataLoader(ds, batch_size=128, shuffle=shuffle_data, num_workers=0)
+        ds = Dataset_imputed(X_d, t_mask=t_mask, imp_X=imp_X, continuous_mean_std=(mean, std), imp_mean_std=(mean, std), cat_cols=cat_idxs)
+        data_loader = DataLoader(ds, batch_size=batch_size, shuffle=shuffle_data, num_workers=0)
     else:
-        data_loader = DataLoader(imp_X, batch_size=128, shuffle=shuffle_data, num_workers=0)
+        data_loader = DataLoader(X, batch_size=batch_size, shuffle=shuffle_data, num_workers=2)
     return data_loader
 
 
-def pre_process_deepifsac(X: pd.DataFrame, t_mask: np.array, median_features: np.array, con_idxs: list, cat_idxs=[]):
+def pre_process_deepifsac(X: pd.DataFrame, t_mask: np.array, mean_features: np.array, std_features: np.array, median_features: np.array, con_idxs: list, cat_idxs=[]):
     ''''
     X: original data filled with mean on missing values
     t_mask: generated mask from masking method 
@@ -299,13 +297,58 @@ def pre_process_deepifsac(X: pd.DataFrame, t_mask: np.array, median_features: np
     Output
     imp_X: X filled by median values according to t_mask
     '''
-    imp_X = X.copy()
+    imp_X = X.copy() 
 
     for i, col in enumerate(imp_X.columns.values[con_idxs]):
         idxs = t_mask[:, i].nonzero()[0]
         imp_X.loc[idxs, col] = median_features[con_idxs[i]]
     
     cat_dims = np.append(np.array([1]), np.array(cat_idxs)).astype(int)
+
     X = X.values.astype(np.float32)
+    X[:, con_idxs] = z_score(X[:, con_idxs], mean_features, std_features)
+
     imp_X = imp_X.values.astype(np.float32)
+    imp_X[:,con_idxs] = z_score(imp_X[:,con_idxs], mean_features, std_features)
+    
     return X, imp_X, cat_dims
+
+
+def pre_process_diffputter(X: np.array, t_mask: np.array, mean_features: np.array, std_features: np.array, cat_idxs=[]):
+    ''''
+    X: original data filled with mean on missing values
+    t_mask: generated mask from masking method 
+
+    Output
+    X_miss: X filled with 0 according to the t_mask
+    '''
+    con_idxs = list(set(np.arange(X.shape[1])) - set(cat_idxs))
+    X[:, con_idxs] = standardize_data(X[:, con_idxs], mean_features, std_features)
+    mask = torch.Tensor(t_mask)
+    
+    X_miss = (1. - mask.float()) * torch.tensor(X)
+    X_miss = X_miss.numpy()
+    X_miss[:, con_idxs] = standardize_data(X_miss[:, con_idxs], mean_features, std_features)
+
+    return X, X_miss, mask
+
+def load_impute_X(filename, corruptor_settings):
+    X_train = pd.read_csv(filename).astype(np.float32)
+    # X_train = load_dataset(datadir=filename)
+    con_columns = X_train.columns
+    con_idxs = list(range(len(X_train.columns)))
+
+    temp = X_train.fillna("MissingValue")
+    nan_mask = temp.ne("MissingValue").astype(int)
+
+    mean_features = X_train.loc[:, con_columns].mean().values.astype(np.float32)
+    std_features = X_train.loc[:, con_columns].std().values.astype(np.float32)
+    median_features = X_train.loc[:, con_columns].median().values.astype(np.float32)
+    
+    for i, col in enumerate(X_train.columns.values[con_idxs]):
+         X_train.loc[:, col] = X_train.loc[:, col].fillna(mean_features[con_idxs[i]])
+    
+    _, t_mask = imputed_data(X_train.values, corruptor_settings)
+    t_mask = np.array(t_mask.cpu()).copy().astype(np.int64) 
+
+    return X_train, nan_mask, t_mask, mean_features, std_features, median_features, con_idxs

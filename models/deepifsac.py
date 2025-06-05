@@ -202,7 +202,7 @@ class DeepIFSAC(nn.Module):
             pickle.dump(metrics_dict, f)
 
 
-    def transform(self, data_loader, device='cpu', mean_std=None, imp_mean_std=None):
+    def transform(self, data_loader, mean_std, imp_mean_std, device='cpu'):
         all_predictions = []
         all_original_data = []
         all_predictions_cat = []
