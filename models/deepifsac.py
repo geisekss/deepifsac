@@ -152,7 +152,7 @@ class DeepIFSAC(nn.Module):
         return cat_outs, con_outs 
     
 
-    def fit(self, trainloader, filename_metrics, epochs, fold_key, device=0):
+    def fit(self, trainloader, filename_metrics, epochs, fold_key, device='cpu'):
          if os.path.exists(filename_metrics):
             with open(filename_metrics, 'rb') as f:
                 try:

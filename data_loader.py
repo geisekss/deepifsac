@@ -282,7 +282,7 @@ def generate_data_loader(X: np.array, t_mask: np.array, mean: np.array, std: np.
         ds = Dataset_imputed(X_d, t_mask=t_mask, imp_X=imp_X, continuous_mean_std=(mean, std), imp_mean_std=(mean, std), cat_cols=cat_idxs)
         data_loader = DataLoader(ds, batch_size=batch_size, shuffle=shuffle_data, num_workers=0)
     else:
-        data_loader = DataLoader(X, batch_size=batch_size, shuffle=shuffle_data, num_workers=2)
+        data_loader = DataLoader(X, batch_size=batch_size, shuffle=shuffle_data, num_workers=0)
     return data_loader
 
 
@@ -323,18 +323,18 @@ def pre_process_diffputter(X: np.array, t_mask: np.array, mean_features: np.arra
     X_miss: X filled with 0 according to the t_mask
     '''
     con_idxs = list(set(np.arange(X.shape[1])) - set(cat_idxs))
-    X[:, con_idxs] = standardize_data(X[:, con_idxs], mean_features, std_features)
+    X = standardize_data(X[:, con_idxs], mean_features, std_features)
     mask = torch.Tensor(t_mask)
     
-    X_miss = (1. - mask.float()) * torch.tensor(X)
-    X_miss = X_miss.numpy()
-    X_miss[:, con_idxs] = standardize_data(X_miss[:, con_idxs], mean_features, std_features)
+    X_miss = (1. - mask.float()) * X.detach().clone()
+    X_miss = X_miss.detach().cpu().numpy()
+    # X_miss[:, con_idxs] = standardize_data(X_miss[:, con_idxs], mean_features, std_features)
 
     return X, X_miss, mask
 
 def load_impute_X(filename, corruptor_settings):
-    X_train = pd.read_csv(filename).astype(np.float32)
-    # X_train = load_dataset(datadir=filename)
+    # X_train = pd.read_csv(filename).astype(np.float32)
+    X_train = load_dataset(datadir=filename)
     con_columns = X_train.columns
     con_idxs = list(range(len(X_train.columns)))
 

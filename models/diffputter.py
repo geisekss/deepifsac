@@ -273,8 +273,8 @@ class DiffPuter(nn.Module):
 
         for trial in range(self.num_trials):
             # ==========================================================
-
-            net = self.denoise_fn_D
+            print(f'Trial = {trial}')
+            net = self.model.denoise_fn_D
 
             num_samples, dim = X.shape[0], X.shape[1]
 
@@ -286,12 +286,10 @@ class DiffPuter(nn.Module):
             rec_X = rec_X * mask_float + impute_X * (1-mask_float)
             rec_Xs.append(rec_X)
             
-            print(f'Trial = {trial}')
-
-        
         rec_X = torch.stack(rec_Xs, dim = 0).mean(0) 
         rec_X = rec_X.cpu().numpy() * 2 
 
+    
         np.save(f'{self.ckpt_dir}/iter_{iteration+1}.npy', rec_X)
         return rec_X
 
@@ -373,9 +371,8 @@ class DiffPuter(nn.Module):
         return x_next
     
     def get_eval(self, X_recon: np.array, X_true: np.array, mask: np.array) -> Tuple[float, float]:
-        
-        X_true = X_true.cpu().numpy() * 2 
-        mask = mask.numpy()
+        X_true = X_true.cpu().numpy() * 2
+        mask = mask.cpu().numpy()
         mask = mask.astype(bool)
 
         mae = float(np.nanmean(np.abs(X_recon[mask]- X_true[mask])))
