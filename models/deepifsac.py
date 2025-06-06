@@ -152,7 +152,7 @@ class DeepIFSAC(nn.Module):
         return cat_outs, con_outs 
     
 
-    def fit(self, trainloader, filename_metrics, epochs, fold_key, device='cpu'):
+    def fit(self, trainloader, filename_metrics, epochs, fold_key, model_path, device='cpu'):
          if os.path.exists(filename_metrics):
             with open(filename_metrics, 'rb') as f:
                 try:
@@ -197,6 +197,11 @@ class DeepIFSAC(nn.Module):
             # Record metrics for the epoch
             metrics_dict[missing_rate_key][fold_key]['epochs'][f'epoch_{epoch}'] = {'running_loss': running_loss}
             print(f'Epoch {epoch + 1}, Loss: {running_loss / num_batches}')
+
+            if (epoch) % 10 == 0:
+                model_path_epoch = model_path.replace(".pth", "_epoch{0}.pth".format(epoch+1))
+                torch.save(self.state_dict(), model_path_epoch)
+
 
          with open(filename_metrics, 'wb') as f:
             pickle.dump(metrics_dict, f)
