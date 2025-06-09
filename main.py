@@ -16,7 +16,7 @@ from data_loader import (
                          generate_data_loader
                         )
 
-TRAIN_EPOCHS = 10
+TRAIN_EPOCHS = 10000
 BATCHSIZE = 8192
 EPOCHS = 1
 MISSING_TYPE = 'mcar'
@@ -74,7 +74,7 @@ def main():
         
         if iteration > 0:
             print(f'Loading X_train_miss')
-            X_train_miss = np.load(f'{MODEL_PATH}/{iteration}/Xmiss_iter{iteration}.npy') / 2
+            X_train_miss = np.load(f'{MODEL_PATH}/iter_{iteration}.npy') / 2
 
         train_loader = generate_data_loader(X_train_miss, t_mask=t_mask, mean=mean_features, std=std_features, batch_size=BATCHSIZE, create_ds=False)
         
@@ -91,7 +91,7 @@ def main():
                                                 }
                     )
         diffputer.model.load_state_dict(torch.load(f'{MODEL_PATH}/{iteration}/model.pt'))
-    
+    '''
     ## DEEPIFSAC  
     
     X_train, nan_mask, t_mask, mean_features, std_features, median_features, con_idxs = load_impute_X("X_dataset_11_balance_missing20.csv", corruptor_settings)
@@ -124,7 +124,7 @@ def main():
 
         fold_key = f'fold_{DS_SEED}'
         filename_metrics = f'{directory}/train_{DATASET}_{MISSING_TYPE}_{MISSING_RATE}_cutmix.pkl' 
-        model.fit(train_loader, filename_metrics, TRAIN_EPOCHS, fold_key, device)
+        model.fit(train_loader, filename_metrics, TRAIN_EPOCHS, fold_key, MODEL_PATH, device)
 
         # Save pretrained model.
         folder = './results/model_weights'
@@ -155,7 +155,7 @@ def main():
     all_predictions_val, nrmse_val = model.transform(val_loader, device)
     print('NRMSE for continuous features on the validantion set:', nrmse_val.item())
     pd.DataFrame(all_predictions_val).to_csv("imputed_validation_set.csv")
-    
+    '''
 
 if __name__ == '__main__':
     main()
