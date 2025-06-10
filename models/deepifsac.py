@@ -169,6 +169,7 @@ class DeepIFSAC(nn.Module):
          corruptor = Corruptor(trainloader.dataset.imp_X, self.corruptor_settings)
          print("DeepIFSAC training begins!")
 
+         best_loss = float('inf')
          for epoch in range(epochs):
             running_loss, num_batches = 0.0, 0
             self.train()
@@ -195,13 +196,19 @@ class DeepIFSAC(nn.Module):
                 num_batches += 1
 
             # Record metrics for the epoch
-            metrics_dict[missing_rate_key][fold_key]['epochs'][f'epoch_{epoch}'] = {'running_loss': running_loss}
-            print(f'Epoch {epoch + 1}, Loss: {running_loss / num_batches}')
+            curr_loss = running_loss / num_batches
+            metrics_dict[missing_rate_key][fold_key]['epochs'][f'epoch_{epoch}'] = {'running_loss': curr_loss}
+            print(f'Epoch {epoch + 1}, Loss: {curr_loss}')
+            
 
-            if (epoch) % 10 == 0:
-                model_path_epoch = model_path.replace(".pth", "_epoch{0}.pth".format(epoch+1))
+            if curr_loss < best_loss:
+                best_loss = curr_loss
+                torch.save(self.state_dict(), model_path)
+                print(f'Saving best model from epoch {epoch}')
+
+            if (epoch+1) % 10 == 0:
+                model_path_epoch = model_path.replace(".pth", f'_epoch{epoch+1}.pth')
                 torch.save(self.state_dict(), model_path_epoch)
-
 
          with open(filename_metrics, 'wb') as f:
             pickle.dump(metrics_dict, f)
